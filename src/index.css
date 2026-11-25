@@ -1,0 +1,63 @@
+@import "tailwindcss";
+
+@theme {
+  --font-display: "Bricolage Grotesque Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: "Public Sans Variable", ui-sans-serif, system-ui, sans-serif;
+
+  /* Paleta "Inscritos" */
+  --color-papel: #f3f4f1;     /* fundo */
+  --color-cartao: #ffffff;    /* superfícies */
+  --color-tinta: #1b2433;     /* texto e barra lateral */
+  --color-tinta-2: #4a5568;   /* texto secundário */
+  --color-linha: #dcdfd8;     /* divisórias */
+  --color-maracuja: #f4b400;  /* destaque */
+  --color-maracuja-claro: #fff4d1;
+  --color-folha: #2e7d5b;     /* interessada */
+  --color-folha-claro: #e3f1ea;
+  --color-ambar: #a8660b;     /* comunicada */
+  --color-ambar-claro: #fbefd9;
+  --color-pedra: #6b7380;     /* sem interesse */
+  --color-pedra-claro: #eceef0;
+  --color-brasa: #c2410c;     /* muitos dias sem retorno / perigo */
+  --color-brasa-claro: #fde8dd;
+  --color-zap: #1f9d55;
+
+  --ease-mola: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@layer base {
+  html { -webkit-tap-highlight-color: transparent; }
+  body { font-family: var(--font-sans); font-feature-settings: "tnum" 0; }
+  h1, h2, h3 { font-family: var(--font-display); letter-spacing: -0.015em; }
+  ::selection { background: var(--color-maracuja-claro); }
+  :focus-visible { outline: 2.5px solid var(--color-maracuja); outline-offset: 2px; border-radius: 6px; }
+  input[type="date"]::-webkit-calendar-picker-indicator { opacity: .55; cursor: pointer; }
+}
+
+@utility campo {
+  @apply w-full rounded-lg border border-linha bg-cartao px-3.5 py-2.5 text-[15px] text-tinta
+    placeholder:text-tinta-2/50 transition-[border-color,box-shadow] duration-150
+    hover:border-tinta/30 focus:border-tinta focus:outline-none focus:ring-4 focus:ring-maracuja/25
+    aria-invalid:border-brasa aria-invalid:focus:ring-brasa/15;
+}
+
+@utility btn {
+  @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-[15px] font-semibold
+    transition-[background-color,transform,box-shadow,color,filter] duration-150 select-none cursor-pointer
+    active:scale-[0.97] disabled:pointer-events-none disabled:opacity-50;
+}
+@utility btn-primario { @apply btn bg-tinta text-white hover:bg-tinta/90; }
+@utility btn-destaque { @apply btn bg-maracuja text-tinta hover:brightness-95; }
+@utility btn-zap { @apply btn bg-zap text-white hover:brightness-110; }
+@utility btn-fantasma { @apply btn text-tinta hover:bg-tinta/[0.06]; }
+@utility btn-perigo { @apply btn text-brasa hover:bg-brasa-claro; }
+@utility btn-contorno { @apply btn border border-linha bg-cartao text-tinta hover:border-tinta/40; }
+
+@utility numero {
+  font-family: var(--font-display);
+  font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+}

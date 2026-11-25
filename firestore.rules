@@ -1,0 +1,148 @@
+rules_version = '2';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Regras de segurança do Inscritos
+//
+// O que elas garantem, do lado do servidor (não dá para burlar pelo navegador):
+//  1. Só usuário autenticado e com e-mail verificado acessa algo.
+//  2. Cada conta só lê e escreve a própria pasta: usuarios/{uid}/...
+//  3. Todo documento gravado é validado campo a campo (tipo, tamanho, formato).
+//     Campos extras são recusados.
+//  4. Datas de criação/alteração vêm do relógio do servidor (request.time),
+//     então ninguém consegue "fabricar" há quantos dias alguém está Comunicada.
+//  5. Lembretes só podem ser registrados para pessoas com status "comunicada"
+//     e o contador só sobe de 1 em 1.
+//  Qualquer caminho não listado aqui é negado.
+// ─────────────────────────────────────────────────────────────────────────────
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function autenticado() {
+      return request.auth != null
+        && (request.auth.token.email_verified == true
+            || request.auth.token.firebase.sign_in_provider == 'google.com');
+    }
+
+    function dono(uid) {
+      return autenticado() && request.auth.uid == uid;
+    }
+
+    function textoSeguro(s, min, max) {
+      return s is string && s.size() >= min && s.size() <= max
+        && !s.matches('(?s).*[<>{}].*');
+    }
+
+    // ── Planos ────────────────────────────────────────────────────────────────
+    function planoValido(d) {
+      return d.keys().hasOnly(['nome', 'valor', 'periodicidade', 'descricao', 'ativo', 'criadoEm', 'atualizadoEm'])
+        && d.keys().hasAll(['nome', 'valor', 'periodicidade', 'descricao', 'ativo', 'criadoEm', 'atualizadoEm'])
+        && textoSeguro(d.nome, 2, 60)
+        && (d.valor is int || d.valor is float) && d.valor >= 0 && d.valor <= 1000000
+        && d.periodicidade in ['mensal', 'trimestral', 'semestral', 'anual', 'unico']
+        && (d.descricao == '' || textoSeguro(d.descricao, 1, 300))
+        && d.ativo is bool
+        && d.criadoEm is timestamp
+        && d.atualizadoEm == request.time;
+    }
+
+    // ── Pessoas ───────────────────────────────────────────────────────────────
+    function pessoaValida(uid, d) {
+      return d.keys().hasOnly(['nomeCompleto', 'dataNascimento', 'whatsapp', 'status', 'planoId',
+                               'observacoes', 'statusAlteradoEm', 'criadoEm', 'atualizadoEm',
+                               'lembretes', 'ultimoLembreteEm'])
+        && d.keys().hasAll(['nomeCompleto', 'dataNascimento', 'whatsapp', 'status', 'planoId',
+                            'observacoes', 'statusAlteradoEm', 'criadoEm', 'atualizadoEm',
+                            'lembretes', 'ultimoLembreteEm'])
+        && textoSeguro(d.nomeCompleto, 2, 120)
+        // data de nascimento e WhatsApp são opcionais (texto vazio), mas se vierem precisam estar no formato
+        && d.dataNascimento is string
+        && (d.dataNascimento == ''
+            || d.dataNascimento.matches('^(19|20)[0-9]{2}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$'))
+        && d.whatsapp is string
+        && (d.whatsapp == ''
+            || d.whatsapp.matches('^55[1-9][1-9](9[0-9]{8}|[2-8][0-9]{7})$'))   // 55 + qualquer DDD + celular ou fixo
+        && d.status in ['interessada', 'comunicada', 'sem_interesse']
+        && planoCoerente(uid, d)
+        && (d.observacoes == '' || textoSeguro(d.observacoes, 1, 500))
+        && d.statusAlteradoEm is timestamp
+        && d.criadoEm is timestamp
+        && d.atualizadoEm == request.time
+        && d.lembretes is int && d.lembretes >= 0 && d.lembretes <= 1000
+        && (d.ultimoLembreteEm == null || d.ultimoLembreteEm is timestamp);
+    }
+
+    // Interessada precisa de um pacote que exista; os outros status não têm pacote.
+    function planoCoerente(uid, d) {
+      return (d.status == 'interessada'
+               && d.planoId is string && d.planoId.size() > 0 && d.planoId.size() <= 64
+               && exists(/databases/$(database)/documents/usuarios/$(uid)/planos/$(d.planoId)))
+        || (d.status != 'interessada' && d.planoId == null);
+    }
+
+    match /usuarios/{uid} {
+
+      match /planos/{planoId} {
+        allow read: if dono(uid);
+
+        allow create: if dono(uid)
+          && planoValido(request.resource.data)
+          && request.resource.data.criadoEm == request.time;
+
+        allow update: if dono(uid)
+          && planoValido(request.resource.data)
+          && request.resource.data.criadoEm == resource.data.criadoEm;
+
+        allow delete: if dono(uid);
+      }
+
+      match /pessoas/{pessoaId} {
+        allow read: if dono(uid);
+
+        allow create: if dono(uid)
+          && pessoaValida(uid, request.resource.data)
+          && request.resource.data.criadoEm == request.time
+          && request.resource.data.statusAlteradoEm == request.time
+          && request.resource.data.lembretes == 0
+          && request.resource.data.ultimoLembreteEm == null;
+
+        allow update: if dono(uid)
+          && pessoaValida(uid, request.resource.data)
+          && request.resource.data.criadoEm == resource.data.criadoEm
+          && (statusMudou() ? statusReiniciado() : statusMantido());
+
+        allow delete: if dono(uid);
+
+        function statusMudou() {
+          return request.resource.data.status != resource.data.status;
+        }
+
+        // Ao trocar de status, o relógio e os lembretes recomeçam do zero.
+        function statusReiniciado() {
+          return request.resource.data.statusAlteradoEm == request.time
+            && request.resource.data.lembretes == 0
+            && request.resource.data.ultimoLembreteEm == null;
+        }
+
+        // Sem troca de status: a data do status não muda e o lembrete
+        // só pode subir de 1 em 1, apenas para quem está "comunicada".
+        function statusMantido() {
+          return request.resource.data.statusAlteradoEm == resource.data.statusAlteradoEm
+            && (
+              (request.resource.data.lembretes == resource.data.lembretes
+                && request.resource.data.ultimoLembreteEm == resource.data.ultimoLembreteEm)
+              ||
+              (request.resource.data.status == 'comunicada'
+                && request.resource.data.lembretes == resource.data.lembretes + 1
+                && request.resource.data.ultimoLembreteEm == request.time)
+            );
+        }
+      }
+    }
+
+    // Todo o resto é negado.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
